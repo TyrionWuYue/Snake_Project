@@ -84,11 +84,11 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_SOURCE = REPO_ROOT / "source" / "Snake_Lab"
+LOCAL_SOURCE = REPO_ROOT / "source" / "snake_project"
 if str(LOCAL_SOURCE) not in sys.path:
     sys.path.insert(0, str(LOCAL_SOURCE))
 
-import Snake_Lab.tasks  # noqa: F401
+import snake_project.tasks  # noqa: F401
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
