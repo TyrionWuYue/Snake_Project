@@ -60,6 +60,7 @@ class EvalCfg:
     virtual_chassis_bodies: Tuple[str, ...] = (
         "base_link",
         "link1", "link2", "link3", "link4", "link5", "link6", "link7",
+        "link8", "link9", "link10", "link11", "link12", "link13", "link14",
     )
     default_joint_angles: Tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 

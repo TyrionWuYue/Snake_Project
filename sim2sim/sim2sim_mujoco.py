@@ -86,6 +86,13 @@ class LeggedGymLikeCfg:
         "link5",
         "link6",
         "link7",
+        "link8",
+        "link9",
+        "link10",
+        "link11",
+        "link12",
+        "link13",
+        "link14",
     )
 
     # init default_joint_angles: all zeros in your cfg

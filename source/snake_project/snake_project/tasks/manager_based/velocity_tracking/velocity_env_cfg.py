@@ -28,7 +28,7 @@ import snake_project.tasks.manager_based.velocity_tracking.mdp as mdp
 from snake_project.assets.Snake import SNAKE_CFG
 
 YAW_JOINT_NAMES = [f"yaw{index}" for index in range(1, 8)]
-VIRTUAL_CHASSIS_BODY_NAMES = ("base_link",) + tuple(f"link{index}" for index in range(1, 8))
+VIRTUAL_CHASSIS_BODY_NAMES = ("base_link",) + tuple(f"link{index}" for index in range(1, 15))
 ROBOT_CFG = SNAKE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
 
@@ -254,7 +254,7 @@ class SnakeVelocityRewardsCfg:
     motion_coordination = RewTerm(func=mdp.motion_coordination, weight=-0.5, params={"asset_cfg": yaw_joint_cfg()})
     is_terminated = RewTerm(func=mdp.is_terminated, weight=-10.0)
     contact_penalty = RewTerm(func=mdp.contact_penalty, weight=-5.0, params={
-        "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=["base_link"] + [f"link{i}" for i in range(1, 15)]),
+        "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=list(VIRTUAL_CHASSIS_BODY_NAMES)),
         "threshold": 0.0,
     })
 
