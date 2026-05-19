@@ -114,7 +114,7 @@
 - 执行训练好的策略
 
   ```bash
-  python scripts/rsl_rl/play.py --task Snake-VelocityTracking-Flat-v0 --checkpoint <your policy> --video
+  python scripts/rsl_rl/play.py --task Snake-VelocityTracking-Flat-Play-v0 --checkpoint <your policy> --video --cmd_vx <your speed> --cmd_vy <your speed>
   ```
 
   
@@ -168,7 +168,7 @@
 - 执行训练好的策略
 
   ```bash
-  python scripts/rsl_rl/play.py --task Snake-VelocityTracking-Flat-Play-v0 --checkpoint <your policy> --video --headless
+  python scripts/rsl_rl/play.py --task Snake-VelocityTracking-Flat-Play-v0 --checkpoint <your policy> --video --cmd_vx <your speed> --cmd_vy <your speed> --headless
   ```
 
   
@@ -348,13 +348,13 @@
 * 请运行sim2sim_python.py来可视化查看指定command的机器人运动情况
 
   ```
-  python sim2sim\sim2sim_mujoco.py --cmd_vx <your speed> --cmd_vy <your speed> --policy <your jit policy>
+  python sim2sim/sim2sim_mujoco.py --cmd_vx <your speed> --cmd_vy <your speed> --policy <your jit policy>
   ```
 
 * 请运行sim2sim_eval.py来评估机器人在25组指令下的速度追踪情况
 
   ```
-  python sim2sim\sim2sim_eval.py --policy <your jit policy>
+  python sim2sim/sim2sim_eval.py --policy <your jit policy>
   ```
 
   > 请注意Mujoco脚本使用的是jit策略，一般需要先用IsaacLab运行play.py，在对应log文件夹下找到export\xxx.pt，这个才是jit的格式

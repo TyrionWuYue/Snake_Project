@@ -127,7 +127,7 @@ class SnakeVelocityObservationsCfg:
         last_actions = ObsTerm(func=mdp.last_raw_actions, params={"action_name": "joint_pos"})
 
         def __post_init__(self) -> None:
-            self.enable_corruption = False
+            self.enable_corruption = True
             self.concatenate_terms = True
 
     @configclass
@@ -144,7 +144,7 @@ class SnakeVelocityObservationsCfg:
         last_actions = ObsTerm(func=mdp.last_raw_actions, params={"action_name": "joint_pos"})
 
         def __post_init__(self) -> None:
-            self.enable_corruption = False
+            self.enable_corruption = True
             self.concatenate_terms = True
 
     policy: PolicyCfg = PolicyCfg()
@@ -230,12 +230,12 @@ class SnakeVelocityRewardsCfg:
 
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.VirtualChassisTrackLinVelXYExp,
-        weight=5.0,
+        weight=3.0,
         params={"command_name": "base_velocity", "std": 0.25, "asset_cfg": virtual_chassis_body_cfg()},
     )
     track_ang_vel_z_exp = RewTerm(
         func=mdp.VirtualChassisTrackAngVelZExp,
-        weight=0.3,
+        weight=1.0,
         params={"command_name": "base_velocity", "std": 0.25, "asset_cfg": virtual_chassis_body_cfg()},
     )
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
