@@ -93,8 +93,8 @@ class SnakeVelocityCommandsCfg:
         velocity_marker_max_speed=0.75,
         velocity_marker_z_offset=0.10,
         ranges=mdp.VirtualChassisVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.4, 0.4),
-            lin_vel_y=(-0.2, 0.2),
+            lin_vel_x=(-0.2, 0.2),
+            lin_vel_y=(-0.1, 0.1),
             ang_vel_z=(-0.0, 0.0),
             heading=(-0.0, 0.0),
         ),
@@ -139,7 +139,7 @@ class SnakeVelocityObservationsCfg:
 
     @configclass
     class CriticCfg(ObsGroup):
-        # base_lin_vel = ObsTerm(func=mdp.base_lin_vel, scale=2.0, noise=Unoise(n_min=-0.2, n_max=0.2))
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, scale=2.0)
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.0125, n_max=0.0125))
         projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.001, n_max=0.001))
         velocity_commands = ObsTerm(
@@ -177,18 +177,6 @@ class SnakeVelocityEventCfg:
                 "pitch": (-0.0, 0.0),
                 "yaw": (-0.0, 0.0),
             },
-        },
-    )
-    randomize_robot_material = EventTerm(
-        func=mdp.randomize_rigid_body_material,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "static_friction_range": (0.3, 1.0),
-            "dynamic_friction_range": (0.3, 1.0),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 64,
-            "make_consistent": True,
         },
     )
 
@@ -236,12 +224,19 @@ class SnakeVelocityRewardsCfg:
 
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.VirtualChassisTrackLinVelXYExp,
-        weight=5.0,
-        params={"command_name": "base_velocity", "std": 0.4, "linear_coef": 0.5, "asset_cfg": virtual_chassis_body_cfg()},
+        # weight=5.0,
+        weight=5.5,
+        params={
+            "command_name": "base_velocity",
+            # "std": 0.3,
+            "std": 0.4,
+            "linear_coef": 0.5,
+            "asset_cfg": virtual_chassis_body_cfg(),
+        },
     )
     track_ang_vel_z_exp = RewTerm(
         func=mdp.VirtualChassisTrackAngVelZExp,
-        weight=1.0,
+        weight=1.25,
         params={"command_name": "base_velocity", "std": 0.25, "asset_cfg": virtual_chassis_body_cfg()},
     )
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
@@ -278,17 +273,20 @@ class SnakeVelocityTerminationsCfg:
 class SnakeVelocityCurriculumCfg:
     """Curriculum hooks for the velocity-tracking task."""
 
-    # command = CurrTerm(
-    #     func=mdp.command_velocity_curriculum,
-    #     params={
-    #         "command_name": "base_velocity",
-    #         "reward_term_name": "track_lin_vel_xy_exp",
-    #         "max_curriculum": 0.4,
-    #         "min_curriculum": 0.1,
-    #         "step_size": 0.05,
-    #         "threshold_ratio": 0.8,
-    #     },
-    # )
+    command = CurrTerm(
+        func=mdp.command_velocity_curriculum,
+        params={
+            "command_name": "base_velocity",
+            "reward_term_name": "track_lin_vel_xy_exp",
+            "max_lin_vel_x": 0.4,
+            "max_lin_vel_y": 0.2,
+            "min_lin_vel_x": 0.2,
+            "min_lin_vel_y": 0.1,
+            "step_size_x": 0.05,
+            "step_size_y": 0.025,
+            "threshold_ratio": 0.8,
+        },
+    )
 
 
 @configclass

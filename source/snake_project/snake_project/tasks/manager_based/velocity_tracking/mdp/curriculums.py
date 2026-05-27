@@ -16,19 +16,32 @@ def command_velocity_curriculum(
     max_curriculum: float = 0.4,
     min_curriculum: float = 0.1,
     step_size: float = 0.05,
+    max_lin_vel_x: float | None = None,
+    max_lin_vel_y: float | None = None,
+    min_lin_vel_x: float | None = None,
+    min_lin_vel_y: float | None = None,
+    step_size_x: float | None = None,
+    step_size_y: float | None = None,
     threshold_ratio: float = 0.8,
     ema_decay: float = 0.05,
     min_env_count: int = 10,
 ) -> dict[str, float]:
-    """Symmetrically expand/shrink the x/y command ranges using EMA-smoothed reward.
+    """Expand/shrink the x/y command ranges using EMA-smoothed reward.
 
     Uses exponential moving average over per-episode tracking rewards.  Only updates
     the range when at least ``min_env_count`` environments have finished, and the
-    EMA crosses the expand / shrink thresholds.
+    EMA crosses the expand / shrink thresholds.  The separate x/y bounds keep the
+    curriculum aligned with the asymmetric baseline command range.
     """
     command_term = env.command_manager.get_term(command_name)
     x_min, x_max = command_term.current_lin_vel_x_range
     y_min, y_max = command_term.current_lin_vel_y_range
+    max_x = max_curriculum if max_lin_vel_x is None else max_lin_vel_x
+    max_y = max_curriculum if max_lin_vel_y is None else max_lin_vel_y
+    min_x = min_curriculum if min_lin_vel_x is None else min_lin_vel_x
+    min_y = min_curriculum if min_lin_vel_y is None else min_lin_vel_y
+    step_x = step_size if step_size_x is None else step_size_x
+    step_y = step_size if step_size_y is None else step_size_y
 
     if env_ids is None or len(env_ids) == 0:
         return {
@@ -51,11 +64,11 @@ def command_velocity_curriculum(
 
     if len(env_ids) >= min_env_count:
         if ema > threshold:
-            x_min, x_max = command_term.expand_lin_vel_x(step_size=step_size, max_curriculum=max_curriculum)
-            y_min, y_max = command_term.expand_lin_vel_y(step_size=step_size, max_curriculum=max_curriculum)
+            x_min, x_max = command_term.expand_lin_vel_x(step_size=step_x, max_curriculum=max_x)
+            y_min, y_max = command_term.expand_lin_vel_y(step_size=step_y, max_curriculum=max_y)
         elif ema < 0.6 * threshold:
-            x_min, x_max = command_term.shrink_lin_vel_x(step_size=step_size, min_curriculum=min_curriculum)
-            y_min, y_max = command_term.shrink_lin_vel_y(step_size=step_size, min_curriculum=min_curriculum)
+            x_min, x_max = command_term.shrink_lin_vel_x(step_size=step_x, min_curriculum=min_x)
+            y_min, y_max = command_term.shrink_lin_vel_y(step_size=step_y, min_curriculum=min_y)
 
     return {
         "lin_vel_x_min": x_min, "lin_vel_x_max": x_max,

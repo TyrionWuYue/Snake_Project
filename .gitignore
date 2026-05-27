@@ -68,3 +68,6 @@ tests/
 
 # Docker history
 .isaac-lab-docker-history
+
+# Experiment Results
+/results/
