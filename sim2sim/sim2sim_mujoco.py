@@ -6,16 +6,17 @@ mujoco_runner.py
 Sim2Sim runner: Legged-Gym (snake) policy -> MuJoCo (MJCF: snake-advanced.xml)
 
 Aligned with velocity_tracking (Play):
-- Obs dim = 30
+- Obs dim = 46
 - Obs layout (snake_project velocity_tracking observations):
     [ base_ang_vel_body (3)
         projected_gravity_body (3)
         commands[:3] (3)
-        (q - default_q) (7)
-        qd (7)
-        last_actions (7) ]
+        14 servo (q - default_q) (14)
+        14 servo qd (14)
+        last_actions (9 CPG params) ]
 - Action -> target position:
-  q_target = default_q + action_scale * action
+  PPO emits CPG parameters, then the CPG action layer expands them to 7 yaw targets:
+  q_target = default_q + action_scale * cpg_yaw_action
 - Control decimation:
   policy_dt = cfg.sim_dt_train * cfg.decimation_train = 0.005 * 4 = 0.02s (50 Hz)
   MuJoCo timestep from XML (snake-advanced.xml) is typically 0.002s => decimation ≈ 10
@@ -35,6 +36,8 @@ from typing import Tuple, Dict, List
 import numpy as np
 import torch
 import mujoco
+
+from cpg_action import CPG_ACTION_DIM, CpgActionDecoder
 
 # fix seeds for reproducibility
 SEED = 42
@@ -71,6 +74,7 @@ class LeggedGymLikeCfg:
 
     # action scaling (snake_robot_config.py control)
     action_scale: float = 0.25
+    cpg_action_dim: int = CPG_ACTION_DIM
     clip_actions: float = 100.0
 
     # commands (velocity_tracking)
@@ -89,6 +93,15 @@ class LeggedGymLikeCfg:
     # joints / base name
     base_body_name: str = "base_link"
     controlled_joints: Tuple[str, ...] = ("yaw1", "yaw2", "yaw3", "yaw4", "yaw5", "yaw6", "yaw7")
+    servo_joints: Tuple[str, ...] = (
+        "yaw1", "pitch1",
+        "yaw2", "pitch2",
+        "yaw3", "pitch3",
+        "yaw4", "pitch4",
+        "yaw5", "pitch5",
+        "yaw6", "pitch6",
+        "yaw7", "pitch7",
+    )
     virtual_chassis_bodies: Tuple[str, ...] = (
         "base_link",
         "link1",
@@ -109,6 +122,9 @@ class LeggedGymLikeCfg:
 
     # init default_joint_angles: all zeros in your cfg
     default_joint_angles: Tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    default_servo_joint_angles: Tuple[float, ...] = (
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    )
 
     # runtime
     device: str = "cpu"
@@ -260,19 +276,34 @@ class MujocoSim2SimRunner:
         self.qpos_adr = np.array(self.qpos_adr, dtype=np.int32)
         self.qvel_adr = np.array(self.qvel_adr, dtype=np.int32)
 
+        self.servo_joint_ids = []
+        self.servo_qpos_adr = []
+        self.servo_qvel_adr = []
+        for jn in cfg.servo_joints:
+            jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, jn)
+            if jid < 0:
+                raise ValueError(f"Servo joint '{jn}' not found in MJCF.")
+            self.servo_joint_ids.append(jid)
+            self.servo_qpos_adr.append(int(self.model.jnt_qposadr[jid]))
+            self.servo_qvel_adr.append(int(self.model.jnt_dofadr[jid]))
+        self.servo_joint_ids = np.array(self.servo_joint_ids, dtype=np.int32)
+        self.servo_qpos_adr = np.array(self.servo_qpos_adr, dtype=np.int32)
+        self.servo_qvel_adr = np.array(self.servo_qvel_adr, dtype=np.int32)
         # Map actuators to joints (your MJCF uses <position joint="jointX">)
         self.act_ids = self._map_actuators_to_joints(self.joint_ids)
         self.ctrl_low, self.ctrl_high = self._get_ctrl_ranges(self.act_ids)
 
         # Default joint angles (training config uses all zeros)
         self.q_default = np.array(cfg.default_joint_angles, dtype=np.float32)
+        self.servo_q_default = np.array(cfg.default_servo_joint_angles, dtype=np.float32)
 
         # Load TorchScript policy
         self.policy = torch.jit.load(policy_path, map_location=cfg.device)
         self.policy.eval()
 
         # Runtime buffers
-        self.last_actions = np.zeros((len(cfg.controlled_joints),), dtype=np.float32)
+        self.last_actions = np.zeros((cfg.cpg_action_dim,), dtype=np.float32)
+        self.cpg_decoder = CpgActionDecoder()
         self.cmd_sampler = CommandSampler(cfg)
 
         # Viewer
@@ -353,6 +384,7 @@ class MujocoSim2SimRunner:
             self.data.qvel[adr] = 0.0
 
         self.last_actions[:] = 0.0
+        self.cpg_decoder.reset()
         self.cmd_sampler.reset()
         
         # Clear logs
@@ -441,8 +473,8 @@ class MujocoSim2SimRunner:
     def _build_obs(self, commands4: np.ndarray) -> np.ndarray:
         _, w_body, g_body, _ = self._get_base_kinematics()
 
-        q = np.array([self.data.qpos[a] for a in self.qpos_adr], dtype=np.float32)
-        qd = np.array([self.data.qvel[a] for a in self.qvel_adr], dtype=np.float32)
+        q = np.array([self.data.qpos[a] for a in self.servo_qpos_adr], dtype=np.float32)
+        qd = np.array([self.data.qvel[a] for a in self.servo_qvel_adr], dtype=np.float32)
 
         cmd3 = commands4[:3].astype(np.float32)
         cmd3_scaled = cmd3 * np.array(
@@ -451,42 +483,47 @@ class MujocoSim2SimRunner:
         )
 
         obs = np.concatenate([
-              w_body * self.cfg.obs_scale_ang_vel,               # 3
-              g_body,                                            # 3
-              cmd3_scaled,                                       # 3
-              (q - self.q_default) * self.cfg.obs_scale_dof_pos, # 7
-              qd * self.cfg.obs_scale_dof_vel,                   # 7
-              self.last_actions.astype(np.float32),              # 7
+              w_body * self.cfg.obs_scale_ang_vel,                           # 3
+              g_body,                                                        # 3
+              cmd3_scaled,                                                   # 3
+              (q - self.servo_q_default) * self.cfg.obs_scale_dof_pos,       # 14
+              qd * self.cfg.obs_scale_dof_vel,                               # 14
+              self.last_actions.astype(np.float32),                          # 9
         ], axis=0)
 
         # inference: match normalization clip
         obs = np.clip(obs, -self.cfg.clip_observations, self.cfg.clip_observations)
 
-        if obs.shape[0] != 30:
-            raise RuntimeError(f"Obs dim mismatch: got {obs.shape[0]}, expected 30.")
+        if obs.shape[0] != 46:
+            raise RuntimeError(f"Obs dim mismatch: got {obs.shape[0]}, expected 46.")
         return obs
 
     def _policy(self, obs: np.ndarray) -> np.ndarray:
         with torch.no_grad():
-            x = torch.from_numpy(obs).float().to(self.cfg.device).unsqueeze(0)  # (1,30)
+            x = torch.from_numpy(obs).float().to(self.cfg.device).unsqueeze(0)
             a = self.policy(x)
             if isinstance(a, (tuple, list)):
                 a = a[0]
             a = a.squeeze(0).detach().cpu().numpy().astype(np.float32)
 
         a = np.clip(a, -self.cfg.clip_actions, self.cfg.clip_actions)
-        if a.shape[0] != len(self.cfg.controlled_joints):
-            raise RuntimeError(f"Action dim mismatch: got {a.shape[0]}, expected {len(self.cfg.controlled_joints)}.")
+        if a.shape[0] != self.cfg.cpg_action_dim:
+            raise RuntimeError(f"Action dim mismatch: got {a.shape[0]}, expected {self.cfg.cpg_action_dim}.")
         return a
 
-    def _apply_position_targets(self, action: np.ndarray):
+    def _apply_default_position_targets(self):
+        q_target = np.clip(self.q_default, self.ctrl_low, self.ctrl_high).astype(np.float32)
+        self.data.ctrl[self.act_ids] = q_target
+
+    def _apply_position_targets(self, action: np.ndarray, command: np.ndarray):
         """
         Your MJCF actuators are <position ...> so:
           data.ctrl[act_id] = q_target
-        where q_target = q_default + action_scale * action
+        where q_target = q_default + action_scale * cpg_yaw_action
         then clamp to actuator ctrlrange.
         """
-        q_target = self.q_default + self.cfg.action_scale * action
+        yaw_action = self.cpg_decoder.decode(action, command, dt=self.mj_dt)
+        q_target = self.q_default + self.cfg.action_scale * yaw_action
         q_target = np.clip(q_target, self.ctrl_low, self.ctrl_high).astype(np.float32)
         self.data.ctrl[self.act_ids] = q_target
 
@@ -673,7 +710,10 @@ class MujocoSim2SimRunner:
                     self.last_actions[:] = action
 
             # apply target positions
-            self._apply_position_targets(self.last_actions)
+            if sim_t >= 0.5:
+                self._apply_position_targets(self.last_actions, cmd4)
+            else:
+                self._apply_default_position_targets()
 
             # log before stepping so velocities correspond to this control step
             self._log_step(sim_t, cmd4)

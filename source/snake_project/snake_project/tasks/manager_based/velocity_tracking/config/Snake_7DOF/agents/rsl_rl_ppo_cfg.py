@@ -15,7 +15,7 @@ class SnakeVelocityFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 200
     experiment_name = "snake_velocity_flat_tracking"
     policy = RslRlPpoActorCriticCfg(
-        init_noise_std=1.0,
+        init_noise_std=0.5,
         actor_obs_normalization=False,
         critic_obs_normalization=False,
         actor_hidden_dims=[512, 256, 128],
@@ -29,7 +29,8 @@ class SnakeVelocityFlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=1.0e-3,
+        # learning_rate=1.0e-3,
+        learning_rate=3.0e-4,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,

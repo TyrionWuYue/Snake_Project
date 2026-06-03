@@ -25,6 +25,8 @@ def command_velocity_curriculum(
     threshold_ratio: float = 0.8,
     ema_decay: float = 0.05,
     min_env_count: int = 10,
+    warmup_steps: int = 0,
+    update_interval_steps: int = 1,
 ) -> dict[str, float]:
     """Expand/shrink the x/y command ranges using EMA-smoothed reward.
 
@@ -62,13 +64,31 @@ def command_velocity_curriculum(
         )
     ema = command_term._tracking_reward_ema
 
+    if env.common_step_counter < warmup_steps:
+        return {
+            "lin_vel_x_min": x_min, "lin_vel_x_max": x_max,
+            "lin_vel_y_min": y_min, "lin_vel_y_max": y_max,
+            "mean_tracking_reward": ema,
+        }
+
+    if update_interval_steps > 1:
+        last_update_step = getattr(command_term, "_curriculum_last_update_step", -update_interval_steps)
+        if env.common_step_counter - last_update_step < update_interval_steps:
+            return {
+                "lin_vel_x_min": x_min, "lin_vel_x_max": x_max,
+                "lin_vel_y_min": y_min, "lin_vel_y_max": y_max,
+                "mean_tracking_reward": ema,
+            }
+
     if len(env_ids) >= min_env_count:
         if ema > threshold:
             x_min, x_max = command_term.expand_lin_vel_x(step_size=step_x, max_curriculum=max_x)
             y_min, y_max = command_term.expand_lin_vel_y(step_size=step_y, max_curriculum=max_y)
+            command_term._curriculum_last_update_step = env.common_step_counter
         elif ema < 0.6 * threshold:
             x_min, x_max = command_term.shrink_lin_vel_x(step_size=step_x, min_curriculum=min_x)
             y_min, y_max = command_term.shrink_lin_vel_y(step_size=step_y, min_curriculum=min_y)
+            command_term._curriculum_last_update_step = env.common_step_counter
 
     return {
         "lin_vel_x_min": x_min, "lin_vel_x_max": x_max,

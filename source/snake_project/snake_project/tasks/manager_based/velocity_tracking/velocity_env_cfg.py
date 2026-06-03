@@ -28,12 +28,17 @@ import snake_project.tasks.manager_based.velocity_tracking.mdp as mdp
 from snake_project.assets.Snake import SNAKE_CFG
 
 YAW_JOINT_NAMES = [f"yaw{index}" for index in range(1, 8)]
+BODY_JOINT_NAMES = [name for index in range(1, 8) for name in (f"yaw{index}", f"pitch{index}")]
 VIRTUAL_CHASSIS_BODY_NAMES = ("base_link",) + tuple(f"link{index}" for index in range(1, 15))
 ROBOT_CFG = SNAKE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 def yaw_joint_cfg() -> SceneEntityCfg:
     return SceneEntityCfg("robot", joint_names=YAW_JOINT_NAMES, preserve_order=True)
+
+
+def body_joint_cfg() -> SceneEntityCfg:
+    return SceneEntityCfg("robot", joint_names=BODY_JOINT_NAMES, preserve_order=True)
 
 
 def virtual_chassis_body_cfg() -> SceneEntityCfg:
@@ -106,13 +111,15 @@ class SnakeVelocityCommandsCfg:
 class SnakeVelocityActionsCfg:
     """Action specifications for the velocity-tracking MDP."""
 
-    joint_pos = mdp.JointPositionActionCfg(
+    joint_pos = mdp.CpgJointPositionActionCfg(
         asset_name="robot",
         joint_names=YAW_JOINT_NAMES,
         scale=0.25,
         use_default_offset=True,
         preserve_order=True,
         clip={"yaw.*": (-1.57, 1.57)},
+        cpg_dt=0.005,
+        command_name="base_velocity",
     )
 
 
@@ -129,8 +136,16 @@ class SnakeVelocityObservationsCfg:
             func=mdp.generated_commands,
             params={"command_name": "base_velocity"},
         )
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel, params={"asset_cfg": yaw_joint_cfg()}, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, params={"asset_cfg": yaw_joint_cfg()}, noise=Unoise(n_min=-0.01, n_max=0.01))
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": body_joint_cfg()},
+            noise=Unoise(n_min=-0.01, n_max=0.01),
+        )
+        joint_vel = ObsTerm(
+            func=mdp.joint_vel_rel,
+            params={"asset_cfg": body_joint_cfg()},
+            noise=Unoise(n_min=-0.01, n_max=0.01),
+        )
         last_actions = ObsTerm(func=mdp.last_raw_actions, params={"action_name": "joint_pos"})
 
         def __post_init__(self) -> None:
@@ -140,14 +155,18 @@ class SnakeVelocityObservationsCfg:
     @configclass
     class CriticCfg(ObsGroup):
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, scale=2.0)
+        virtual_chassis_velocity = ObsTerm(
+            func=mdp.virtual_chassis_velocity,
+            params={"asset_cfg": virtual_chassis_body_cfg()},
+        )
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.0125, n_max=0.0125))
         projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.001, n_max=0.001))
         velocity_commands = ObsTerm(
             func=mdp.generated_commands,
             params={"command_name": "base_velocity"},
         )
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel, params={"asset_cfg": yaw_joint_cfg()}, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, params={"asset_cfg": yaw_joint_cfg()}, noise=Unoise(n_min=-0.01, n_max=0.01))
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel, params={"asset_cfg": body_joint_cfg()})
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel, params={"asset_cfg": body_joint_cfg()})
         last_actions = ObsTerm(func=mdp.last_raw_actions, params={"action_name": "joint_pos"})
 
         def __post_init__(self) -> None:
@@ -229,9 +248,35 @@ class SnakeVelocityRewardsCfg:
         params={
             "command_name": "base_velocity",
             # "std": 0.3,
-            "std": 0.4,
-            "linear_coef": 0.5,
+            "std": 0.3,
+            "linear_coef": 1.0,
+            "decompose_command": True,
+            "parallel_std": 0.18,
+            "perp_std": 0.15,
+            "command_deadband": 0.03,
+            "reverse_coef": 1.5,
             "asset_cfg": virtual_chassis_body_cfg(),
+        },
+    )
+    command_direction_progress = RewTerm(
+        func=mdp.VirtualChassisCommandDirectionReward,
+        weight=1.5,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": virtual_chassis_body_cfg(),
+            "command_deadband": 0.03,
+            "progress_clip": 1.0,
+        },
+    )
+    command_progress_floor = RewTerm(
+        func=mdp.VirtualChassisCommandProgressFloorPenalty,
+        weight=-1.5,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": virtual_chassis_body_cfg(),
+            "command_deadband": 0.08,
+            "progress_clip": 1.0,
+            "progress_floor": 0.25,
         },
     )
     track_ang_vel_z_exp = RewTerm(
@@ -242,10 +287,21 @@ class SnakeVelocityRewardsCfg:
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-4, params={"asset_cfg": yaw_joint_cfg()})
     joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7, params={"asset_cfg": yaw_joint_cfg()})
-    raw_action_rate = RewTerm(func=mdp.RawActionRatePenalty, weight=-0.01, params={"action_term_name": "joint_pos"})
+    raw_action_rate = RewTerm(
+        func=mdp.RawActionRatePenalty,
+        weight=-0.006,
+        params={"action_term_name": "joint_pos"},
+    )
+    # CPG action-space policy already emits compact gait parameters, not seven independent yaw actions.
+    # action_wave_fit is therefore not meaningful on raw actions in this version.
+    # action_wave_fit = RewTerm(
+    #     func=mdp.ActionWaveFitPenalty,
+    #     weight=-0.01,
+    #     params={"action_term_name": "joint_pos", "penalty_clip": 1.0},
+    # )
     joint_amplitude = RewTerm(func=mdp.joint_amplitude, weight=0.2, params={"asset_cfg": yaw_joint_cfg()})
     phase_propagation = RewTerm(func=mdp.phase_propagation, weight=0.4, params={"asset_cfg": yaw_joint_cfg()})
-    motion_coordination = RewTerm(func=mdp.motion_coordination, weight=-0.5, params={"asset_cfg": yaw_joint_cfg()})
+    motion_coordination = RewTerm(func=mdp.motion_coordination, weight=-0.3, params={"asset_cfg": yaw_joint_cfg()})
     # is_terminated = RewTerm(func=mdp.is_terminated, weight=-10.0)
     # contact_penalty = RewTerm(func=mdp.contact_penalty, weight=-5.0, params={
     #     "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=list(VIRTUAL_CHASSIS_BODY_NAMES)),
@@ -282,9 +338,12 @@ class SnakeVelocityCurriculumCfg:
             "max_lin_vel_y": 0.2,
             "min_lin_vel_x": 0.2,
             "min_lin_vel_y": 0.1,
-            "step_size_x": 0.05,
-            "step_size_y": 0.025,
-            "threshold_ratio": 0.8,
+            "step_size_x": 0.025,
+            "step_size_y": 0.0125,
+            "threshold_ratio": 0.88,
+            "ema_decay": 0.02,
+            "warmup_steps": 45000,
+            "update_interval_steps": 4800,
         },
     )
 

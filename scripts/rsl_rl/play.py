@@ -200,6 +200,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print("[WARN] Plotting disabled (base_velocity command term unavailable).")
         record_plot = False
 
+    def apply_manual_command() -> None:
+        if not manual_command_enabled:
+            return
+        env_ids = torch.arange(command_term.num_envs, device=command_term.device)
+        command_term.vel_command_b[env_ids, 0] = args_cli.cmd_vx
+        command_term.vel_command_b[env_ids, 1] = args_cli.cmd_vy
+        command_term.vel_command_b[env_ids, 2] = args_cli.cmd_wz
+
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     if agent_cfg.class_name == "OnPolicyRunner":
@@ -243,16 +251,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         max_steps = int(env_cfg.episode_length_s / dt)
 
     # reset environment
+    apply_manual_command()
     obs = env.get_observations()
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
-        if manual_command_enabled:
-            env_ids = torch.arange(command_term.num_envs, device=command_term.device)
-            command_term.vel_command_b[env_ids, 0] = args_cli.cmd_vx
-            command_term.vel_command_b[env_ids, 1] = args_cli.cmd_vy
-            command_term.vel_command_b[env_ids, 2] = args_cli.cmd_wz
+        apply_manual_command()
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping

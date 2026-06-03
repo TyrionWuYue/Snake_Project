@@ -32,6 +32,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from cpg_action import CPG_ACTION_DIM, CpgActionDecoder
+
 matplotlib.use("Agg")
 
 # fix seeds for reproducibility
@@ -62,6 +64,7 @@ class EvalCfg:
     policy_dt_train: float = 0.005 * 4
 
     action_scale: float = 0.25
+    cpg_action_dim: int = CPG_ACTION_DIM
     clip_actions: float = 100.0
     clip_observations: float = 100.0
 
@@ -69,12 +72,24 @@ class EvalCfg:
     controlled_joints: Tuple[str, ...] = (
         "yaw1", "yaw2", "yaw3", "yaw4", "yaw5", "yaw6", "yaw7",
     )
+    servo_joints: Tuple[str, ...] = (
+        "yaw1", "pitch1",
+        "yaw2", "pitch2",
+        "yaw3", "pitch3",
+        "yaw4", "pitch4",
+        "yaw5", "pitch5",
+        "yaw6", "pitch6",
+        "yaw7", "pitch7",
+    )
     virtual_chassis_bodies: Tuple[str, ...] = (
         "base_link",
         "link1", "link2", "link3", "link4", "link5", "link6", "link7",
         "link8", "link9", "link10", "link11", "link12", "link13", "link14",
     )
     default_joint_angles: Tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    default_servo_joint_angles: Tuple[float, ...] = (
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    )
 
     device: str = "cpu"
     seed: int = 1
@@ -186,14 +201,30 @@ class EvalRunner:
         self.qpos_adr = np.array(self.qpos_adr, dtype=np.int32)
         self.qvel_adr = np.array(self.qvel_adr, dtype=np.int32)
 
+        self.servo_joint_ids = []
+        self.servo_qpos_adr = []
+        self.servo_qvel_adr = []
+        for jn in cfg.servo_joints:
+            jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, jn)
+            if jid < 0:
+                raise ValueError(f"Servo joint '{jn}' not found.")
+            self.servo_joint_ids.append(jid)
+            self.servo_qpos_adr.append(int(self.model.jnt_qposadr[jid]))
+            self.servo_qvel_adr.append(int(self.model.jnt_dofadr[jid]))
+        self.servo_joint_ids = np.array(self.servo_joint_ids, dtype=np.int32)
+        self.servo_qpos_adr = np.array(self.servo_qpos_adr, dtype=np.int32)
+        self.servo_qvel_adr = np.array(self.servo_qvel_adr, dtype=np.int32)
+
         self.act_ids = self._map_actuators_to_joints(self.joint_ids)
         self.ctrl_low, self.ctrl_high = self._get_ctrl_ranges(self.act_ids)
         self.q_default = np.array(cfg.default_joint_angles, dtype=np.float32)
+        self.servo_q_default = np.array(cfg.default_servo_joint_angles, dtype=np.float32)
 
         self.policy = torch.jit.load(policy_path, map_location=cfg.device)
         self.policy.eval()
 
-        self.last_actions = np.zeros((len(cfg.controlled_joints),), dtype=np.float32)
+        self.last_actions = np.zeros((cfg.cpg_action_dim,), dtype=np.float32)
+        self.cpg_decoder = CpgActionDecoder()
 
         self.command = np.array([cfg.cmd_vx, cfg.cmd_vy, cfg.cmd_wz, 0.0], dtype=np.float32)
 
@@ -248,18 +279,20 @@ class EvalRunner:
 
     def _build_obs(self) -> np.ndarray:
         w_body, g_body = self._get_base_kinematics()
-        q = np.array([self.data.qpos[a] for a in self.qpos_adr], dtype=np.float32)
-        qd = np.array([self.data.qvel[a] for a in self.qvel_adr], dtype=np.float32)
+        q = np.array([self.data.qpos[a] for a in self.servo_qpos_adr], dtype=np.float32)
+        qd = np.array([self.data.qvel[a] for a in self.servo_qvel_adr], dtype=np.float32)
         cmd3 = self.command[:3].astype(np.float32)
         obs = np.concatenate([
             w_body,
             g_body,
             cmd3,
-            (q - self.q_default),
+            (q - self.servo_q_default),
             qd,
             self.last_actions.astype(np.float32),
         ], axis=0)
         obs = np.clip(obs, -self.cfg.clip_observations, self.cfg.clip_observations)
+        if obs.shape[0] != 46:
+            raise RuntimeError(f"Obs dim mismatch: got {obs.shape[0]}, expected 46.")
         return obs
 
     def _policy(self, obs: np.ndarray) -> np.ndarray:
@@ -268,12 +301,19 @@ class EvalRunner:
             a = self.policy(x)
             if isinstance(a, (tuple, list)):
                 a = a[0]
-            a = a.squeeze(0).detach().cpu().numpy().astype(np.float32)
+        a = a.squeeze(0).detach().cpu().numpy().astype(np.float32)
         a = np.clip(a, -self.cfg.clip_actions, self.cfg.clip_actions)
+        if a.shape[0] != self.cfg.cpg_action_dim:
+            raise RuntimeError(f"Action dim mismatch: got {a.shape[0]}, expected {self.cfg.cpg_action_dim}.")
         return a
 
+    def _apply_default_position_targets(self):
+        q_target = np.clip(self.q_default, self.ctrl_low, self.ctrl_high).astype(np.float32)
+        self.data.ctrl[self.act_ids] = q_target
+
     def _apply_position_targets(self, action: np.ndarray):
-        q_target = self.q_default + self.cfg.action_scale * action
+        yaw_action = self.cpg_decoder.decode(action, self.command, dt=self.mj_dt)
+        q_target = self.q_default + self.cfg.action_scale * yaw_action
         q_target = np.clip(q_target, self.ctrl_low, self.ctrl_high).astype(np.float32)
         self.data.ctrl[self.act_ids] = q_target
 
@@ -284,6 +324,7 @@ class EvalRunner:
         for adr in self.qvel_adr:
             self.data.qvel[adr] = 0.0
         self.last_actions[:] = 0.0
+        self.cpg_decoder.reset()
         self._log_t.clear()
         self._log_vc_vx.clear()
         self._log_vc_vy.clear()
@@ -336,7 +377,10 @@ class EvalRunner:
                     obs = self._build_obs()
                     action = self._policy(obs)
                     self.last_actions[:] = action
-                    self._apply_position_targets(action)
+            if sim_t >= 0.5:
+                self._apply_position_targets(self.last_actions)
+            else:
+                self._apply_default_position_targets()
             mujoco.mj_step(self.model, self.data)
             sim_t += self.mj_dt
         return self._logs_to_dict()

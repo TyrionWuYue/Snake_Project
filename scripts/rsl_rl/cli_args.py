@@ -81,6 +81,8 @@ def update_rsl_rl_cfg(agent_cfg: RslRlBaseRunnerCfg, args_cli: argparse.Namespac
         agent_cfg.load_checkpoint = args_cli.checkpoint
     if args_cli.run_name is not None:
         agent_cfg.run_name = args_cli.run_name
+    if args_cli.experiment_name is not None:
+        agent_cfg.experiment_name = args_cli.experiment_name
     if args_cli.logger is not None:
         agent_cfg.logger = args_cli.logger
     # set the project name for wandb and neptune
