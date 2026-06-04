@@ -8,6 +8,52 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def _set_command_range(command_term, x_abs: float, y_abs: float) -> tuple[float, float, float, float]:
+    x_min = round(-abs(float(x_abs)), 4)
+    x_max = round(abs(float(x_abs)), 4)
+    y_min = round(-abs(float(y_abs)), 4)
+    y_max = round(abs(float(y_abs)), 4)
+    command_term.current_lin_vel_x_range = [x_min, x_max]
+    command_term.current_lin_vel_y_range = [y_min, y_max]
+    command_term.cfg.ranges.lin_vel_x = (x_min, x_max)
+    command_term.cfg.ranges.lin_vel_y = (y_min, y_max)
+    return x_min, x_max, y_min, y_max
+
+
+def scheduled_command_velocity_curriculum(
+    env: "ManagerBasedRLEnv",
+    env_ids,
+    command_name: str = "base_velocity",
+    min_lin_vel_x: float = 0.2,
+    min_lin_vel_y: float = 0.1,
+    max_lin_vel_x: float = 0.4,
+    max_lin_vel_y: float = 0.2,
+    schedule_start_steps: int = 48_000,
+    schedule_end_steps: int = 96_000,
+) -> dict[str, float]:
+    """Deterministically widen x/y command ranges on a fixed training schedule."""
+    command_term = env.command_manager.get_term(command_name)
+
+    if env.common_step_counter <= schedule_start_steps:
+        progress = 0.0
+    elif env.common_step_counter >= schedule_end_steps:
+        progress = 1.0
+    else:
+        progress = (env.common_step_counter - schedule_start_steps) / max(1, schedule_end_steps - schedule_start_steps)
+
+    x_abs = min_lin_vel_x + progress * (max_lin_vel_x - min_lin_vel_x)
+    y_abs = min_lin_vel_y + progress * (max_lin_vel_y - min_lin_vel_y)
+    x_min, x_max, y_min, y_max = _set_command_range(command_term, x_abs=x_abs, y_abs=y_abs)
+
+    return {
+        "lin_vel_x_min": x_min,
+        "lin_vel_x_max": x_max,
+        "lin_vel_y_min": y_min,
+        "lin_vel_y_max": y_max,
+        "schedule_progress": progress,
+    }
+
+
 def command_velocity_curriculum(
     env: "ManagerBasedRLEnv",
     env_ids,

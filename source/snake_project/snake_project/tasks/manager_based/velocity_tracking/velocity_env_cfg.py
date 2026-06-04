@@ -330,20 +330,15 @@ class SnakeVelocityCurriculumCfg:
     """Curriculum hooks for the velocity-tracking task."""
 
     command = CurrTerm(
-        func=mdp.command_velocity_curriculum,
+        func=mdp.scheduled_command_velocity_curriculum,
         params={
             "command_name": "base_velocity",
-            "reward_term_name": "track_lin_vel_xy_exp",
             "max_lin_vel_x": 0.4,
             "max_lin_vel_y": 0.2,
             "min_lin_vel_x": 0.2,
             "min_lin_vel_y": 0.1,
-            "step_size_x": 0.025,
-            "step_size_y": 0.0125,
-            "threshold_ratio": 0.88,
-            "ema_decay": 0.02,
-            "warmup_steps": 45000,
-            "update_interval_steps": 4800,
+            "schedule_start_steps": 48000,
+            "schedule_end_steps": 96000,
         },
     )
 
