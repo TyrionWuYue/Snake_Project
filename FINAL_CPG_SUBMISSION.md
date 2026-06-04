@@ -1,6 +1,6 @@
 # 最终版本：CPG + Scheduled Curriculum
 
-本文说明从原始 baseline（参考 [Zomnk/Snake_Project README](https://github.com/Zomnk/Snake_Project/blob/main/README.md)）到最终提交版本的主要改动。作业要求中允许修改奖励、课程学习，并在端到端 action 输出效果不佳时采用其他 action 形式；最终方案遵守这一边界，没有向 policy 引入额外特权观测。
+本文说明从原始 baseline（参考 [Zomnk/Snake_Project README](https://github.com/Zomnk/Snake_Project/blob/main/README.md)）到最终提交版本的主要改动。作业要求中允许修改奖励、课程学习，并在端到端 action 输出效果不佳时采用其他 action 形式；最终方案遵守这一边界，没有向 policy 引入额外特权观测。提交代码使用的是改动后的 action 形式，因此可能无法直接执行原 sim2sim ，如需复现，欢迎随时联系。
 
 ## 1. 从逐关节 MLP 到 CPG 参数化动作空间
 
